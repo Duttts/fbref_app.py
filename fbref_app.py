@@ -9,12 +9,11 @@ st.set_page_config(
 
 st.title("⚡ Premier League Advanced Stats (FotMob / Opta Data)")
 st.markdown(
-    "Direct live feed from FotMob's Opta data endpoints. Includes **xG, xA,"
-    " Big Chances, Key Passes, and Box Touches**."
+    "Direct live feed from FotMob's API. Includes **xG, xA, Big Chances,"
+    " Shots on Target, and Key Passes** without scraping blocks."
 )
 
 # --- 2. STAT CATEGORY MAPPING ---
-# FotMob internal stat keys for Premier League (League ID: 47)
 STAT_CATEGORIES = {
     "Expected Goals (xG)": "expected_goals",
     "Expected Assists (xA)": "expected_assists",
@@ -35,46 +34,57 @@ if st.sidebar.button("🔄 Refresh Data"):
     st.cache_data.clear()
     st.rerun()
 
+HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML,"
+        " like Gecko) Chrome/124.0.0.0 Safari/537.36"
+    ),
+    "Accept": "application/json",
+}
+
 
 # --- 3. FOTMOB DATA FETCH ENGINE ---
 @st.cache_data(ttl=900)
 def fetch_fotmob_leaderboard(stat_key):
-    """Fetches category leaderboards directly from FotMob API without blocking."""
-    url = f"https://www.fotmob.com/api/leagueseasonstats?id=47&season=2025/2026&type=players&stat={stat_key}"
-
-    headers = {
-        "User-Agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-        ),
-        "Accept": "application/json",
-    }
+    """Fetches player stat leaderboards from FotMob API for the Premier League (ID: 47)."""
+    # Using FotMob's general season endpoint structure
+    url = f"https://www.fotmob.com/api/leagueseasonstats?id=47&type=players&stat={stat_key}"
 
     try:
-        res = requests.get(url, headers=headers, timeout=10)
+        res = requests.get(url, headers=HEADERS, timeout=10)
+
+        # Fallback if standard endpoint varies
+        if res.status_code == 404:
+            url_alt = f"https://www.fotmob.com/api/m/leagueseasonstats?id=47&type=players&stat={stat_key}"
+            res = requests.get(url_alt, headers=HEADERS, timeout=10)
+
         if res.status_code == 200:
             data = res.json()
 
-            # Parse player stats array
+            # Parse stats array
             stats_list = data.get("statsData", [])
-            parsed_rows = []
+            if not stats_list and "topThree" in data:
+                stats_list = data.get("topThree", []) + data.get("all", [])
 
+            parsed_rows = []
             for entry in stats_list:
                 parsed_rows.append({
                     "Player": entry.get("name"),
                     "Team": entry.get("teamName"),
                     "Stat Value": entry.get("statValue"),
-                    "SubStat / Per90": entry.get("subStatValue"),
-                    "Matches Played": entry.get("matchesStarted", 0)
+                    "Per 90 / Detail": entry.get("subStatValue", "-"),
+                    "Matches": entry.get("matchesStarted", 0)
                     + entry.get("matchesSubbedOn", 0),
                 })
 
             return pd.DataFrame(parsed_rows)
         else:
             st.error(
-                f"FotMob API returned status {res.status_code}. Try again in a"
-                " moment."
+                f"FotMob returned status {res.status_code}. The endpoint may"
+                " be temporarily unavailable."
             )
             return pd.DataFrame()
+
     except Exception as e:
         st.error(f"Error fetching FotMob data: {e}")
         return pd.DataFrame()
@@ -101,4 +111,4 @@ if not df_fotmob.empty:
 
     st.dataframe(filtered_df, use_container_width=True)
 else:
-    st.warning("No data retrieved for this stat category.")
+    st.warning("No data retrieved. Try clicking 'Refresh Data' in the sidebar.")
